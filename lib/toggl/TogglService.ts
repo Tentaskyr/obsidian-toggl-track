@@ -84,8 +84,9 @@ export default class TogglService {
     this._plugin.registerDomEvent(this._statusBarItem, "click", () => {
       this.refreshApiConnection(this._plugin.settings.apiToken);
     });
+
     // Store a reference to the manager in a svelte store to avoid passing
-    // of references around the component trees.
+    // references around the component trees.
     togglService.set(this);
     apiStatusStore.set(ApiStatus.UNTESTED);
   }
@@ -106,8 +107,12 @@ export default class TogglService {
       new Notice("Reconnecting to Toggl...");
     }
 
+    // stop any previous intervals
     window.clearInterval(this._currentTimerInterval);
+    this._currentTimerInterval = null;
     window.clearInterval(this._statusBarInterval);
+    this._statusBarInterval = null;
+
     if (token != null && token != "") {
       try {
         this._apiManager = new TogglAPI();
@@ -120,21 +125,63 @@ export default class TogglService {
         this.noticeAPINotAvailable();
         return;
       }
-      // Cache the projects and tags.
+
+      // Cache the projects, tags, clients.
       await this._preloadWorkspaceData();
 
-      // Fetch daily summary data and start polling for current timers.
-      this.startTimerInterval();
-      this.startStatusBarInterval();
-      this._apiManager
-        .getDailySummary()
-        .then((response) => setDailySummaryItems(response));
+      // One immediate update so UI isn’t stale
+      await this.updateCurrentTimer();
+
+      // Kick a daily summary once on connect (no interval here)
+      this._apiManager.getDailySummary().then((response) => setDailySummaryItems(response));
+
+      // Start/stop background polling based on settings
+      this.restartPolling();
     } else {
       this._statusBarItem.setText("Open settings to add a Toggl API token.");
       this._setApiStatus(ApiStatus.NO_TOKEN);
       this.noticeAPINotAvailable();
     }
+
     apiStatusStore.set(this._ApiAvailable);
+  }
+
+  /** Restart/stop polling based on current settings. Safe to call anytime. */
+  public restartPolling() {
+    // Stop existing intervals
+    if (this._currentTimerInterval != null) {
+      window.clearInterval(this._currentTimerInterval);
+      this._currentTimerInterval = null;
+    }
+    if (this._statusBarInterval != null) {
+      window.clearInterval(this._statusBarInterval);
+      this._statusBarInterval = null;
+    }
+
+    // Manual mode ⇒ no background polling (but keep status bar updated once)
+    if (this._plugin.settings.reducedPolling?.manualMode) {
+      this.updateStatusBarText();
+      return;
+    }
+
+    // Re-start intervals with gating
+    this.startTimerInterval();
+    this.startStatusBarInterval(); // UI only; no API hit here
+  }
+
+  /** Manual, on-demand refresh that UI can call. */
+  public async refreshCurrentEntry() {
+    await this.updateCurrentTimer(); // pulls current entry (gated inside)
+    this.updateStatusBarText();      // update status bar once
+  }
+
+  /** (Optional) Manual user/workspace refresh if you display it. */
+  public async refreshUser() {
+    try {
+      await this._preloadWorkspaceData();
+    } catch (e) {
+      console.error("refreshUser failed", e);
+    }
   }
 
   /** Throws an Error when the Toggl Track API cannot be reached. */
@@ -149,7 +196,7 @@ export default class TogglService {
 
   /** Preloads data such as the user's projects. */
   private async _preloadWorkspaceData() {
-    // Preload projects and tags.
+    // Preload projects, tags, clients.
     await Promise.all([
       this._apiManager.getProjects().then(setProjects),
       this._apiManager.getTags().then(setTags),
@@ -174,7 +221,7 @@ export default class TogglService {
         selectedEntry.project_id = project != null ? project.id : null;
       }
 
-      this._apiManager.startTimer(selectedEntry).then((entry) => {
+      this._apiManager.startTimer(selectedEntry).then((_entry) => {
         this.updateCurrentTimer();
       });
     });
@@ -191,19 +238,40 @@ export default class TogglService {
   }
 
   /**
-   * Start polling the Toggl Track API periodically to get the
-   * currently running timer.
+   * Start polling the Toggl Track API periodically for the current timer,
+   * respecting Manual mode, window focus/visibility, and "poll only when active".
    */
   private startTimerInterval() {
-    this.updateCurrentTimer();
-    this._currentTimerInterval = window.setInterval(() => {
+    // Manual mode should never get here (double guard)
+    if (this._plugin.settings.reducedPolling?.manualMode) return;
+
+    const tick = () => {
+      // 1) Skip if app/window is unfocused/hidden
+      const hasFocus = (this._plugin as any)["windowHasFocus"] ?? true;
+      if (!hasFocus) return;
+
+      // 2) Optionally only poll when "active" (timer running OR panel visible)
+      if (this._plugin.settings.reducedPolling?.pollOnlyWhenActive) {
+        const running = !!this._plugin.lastKnownTimerRunning;
+        const panelVisible = !!this._plugin.panelIsVisible;
+        if (!running && !panelVisible) return;
+      }
+
+      // 3) Normal API pull
       this.updateCurrentTimer();
-    }, ACTIVE_TIMER_POLLING_INTERVAL);
+    };
+
+    // schedule
+    this._currentTimerInterval = window.setInterval(
+      tick,
+      ACTIVE_TIMER_POLLING_INTERVAL
+    );
     this._plugin.registerInterval(this._currentTimerInterval);
   }
 
   /**
    * Start updating the status bar periodically.
+   * (UI-only; does not hit the API.)
    */
   private startStatusBarInterval() {
     this.updateStatusBarText();
@@ -279,13 +347,16 @@ export default class TogglService {
 
     if (changed) {
       setCurrentTimer(curr);
-      // fetch updated daily summary report
+      // fetch updated daily summary report (single shot)
       this._apiManager
         .getDailySummary()
         .then((response) => setDailySummaryItems(response));
     }
 
     this._currentTimeEntry = curr;
+
+    // NEW: update plugin-level flag so views can gate polling
+    this._plugin.lastKnownTimerRunning = !!this._currentTimeEntry;
   }
 
   /**
@@ -474,7 +545,7 @@ function isTagsChanged(old_tag_ids: number[], new_tags_ids: number[]) {
   for (const tag of old_tag_ids) {
     if (new_tags_ids.indexOf(tag) < 0) {
       return true;
-    }
+  }
   }
   return false;
 }
