@@ -74,6 +74,46 @@ export default class TogglSettingsTab extends PluginSettingTab {
       });
   }
 
+	// Manual refresh only
+	new Setting(containerEl)
+	  .setName("Manual refresh only")
+	  .setDesc("Disable background polling; use the 'Toggl: Refresh now' command.")
+	  .addToggle(t => t
+		.setValue(this.plugin.settings.reducedPolling.manualMode)
+		.onChange(async v => {
+		  this.plugin.settings.reducedPolling.manualMode = v;
+		  await this.plugin.saveSettings();
+		  (this.plugin.reportView as any)?.restartPolling?.();
+		})
+	  );
+
+	// Poll only when active
+	new Setting(containerEl)
+	  .setName("Poll only when active")
+	  .setDesc("Auto-poll only if a timer is running or the report panel is open.")
+	  .addToggle(t => t
+		.setValue(this.plugin.settings.reducedPolling.pollOnlyWhenActive)
+		.onChange(async v => {
+		  this.plugin.settings.reducedPolling.pollOnlyWhenActive = v;
+		  await this.plugin.saveSettings();
+		  (this.plugin.reportView as any)?.restartPolling?.();
+		})
+	  );
+
+	// Polling interval
+	new Setting(containerEl)
+	  .setName("Polling interval (seconds)")
+	  .addSlider(s => s
+		.setLimits(5, 120, 5)
+		.setValue(this.plugin.settings.reducedPolling.pollIntervalMs / 1000)
+		.setDynamicTooltip()
+		.onChange(async val => {
+		  this.plugin.settings.reducedPolling.pollIntervalMs = val * 1000;
+		  await this.plugin.saveSettings();
+		  (this.plugin.reportView as any)?.restartPolling?.();
+		})
+	  );
+	  
   private addWorkspaceSetting(containerEl: HTMLElement) {
     new Setting(containerEl)
       .setName("Toggl Workspace")
