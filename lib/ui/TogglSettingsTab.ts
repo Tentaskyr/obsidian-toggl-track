@@ -84,6 +84,7 @@ export default class TogglSettingsTab extends PluginSettingTab {
 		  this.plugin.settings.reducedPolling.manualMode = v;
 		  await this.plugin.saveSettings();
 		  (this.plugin.reportView as any)?.restartPolling?.();
+		  (this.plugin.toggl as any)?.restartPolling?.();
 		})
 	  );
 
@@ -97,6 +98,7 @@ export default class TogglSettingsTab extends PluginSettingTab {
 		  this.plugin.settings.reducedPolling.pollOnlyWhenActive = v;
 		  await this.plugin.saveSettings();
 		  (this.plugin.reportView as any)?.restartPolling?.();
+		  (this.plugin.toggl as any)?.restartPolling?.();
 		})
 	  );
 
@@ -111,6 +113,7 @@ export default class TogglSettingsTab extends PluginSettingTab {
 		  this.plugin.settings.reducedPolling.pollIntervalMs = val * 1000;
 		  await this.plugin.saveSettings();
 		  (this.plugin.reportView as any)?.restartPolling?.();
+		  (this.plugin.toggl as any)?.restartPolling?.();
 		})
 	  );
 	  
