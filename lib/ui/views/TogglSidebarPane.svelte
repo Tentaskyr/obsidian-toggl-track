@@ -18,6 +18,11 @@
   import TogglReportProjectList from "../components/reports/TogglReportProjectList.svelte";
   import NewFeatureNotification from "./NewFeatureNotification.svelte";
 
+  // NEW props
+  export let active: boolean = true;        // true while panel visible
+  export let manualMode: boolean = false;   // show “manual mode” banner
+  export let onManualRefresh: (() => Promise<void>) | undefined;
+
   let timer: TimeEntry;
   let duration: number;
   let timeoutHandle: number;
@@ -26,18 +31,28 @@
     timer = val;
     if (timeoutHandle) {
       window.clearTimeout(timeoutHandle);
+      timeoutHandle = undefined as unknown as number;
     }
-    updateDuration();
+    if (active) {
+      updateDuration();
+    } else {
+      duration = 0;
+    }
   });
 
-  onDestroy(unsubscribe);
+  onDestroy(() => {
+    unsubscribe();
+    if (timeoutHandle) window.clearTimeout(timeoutHandle);
+  });
+
+  $: if (!active && timeoutHandle) {
+    window.clearTimeout(timeoutHandle);
+    timeoutHandle = undefined as unknown as number;
+  }
 
   function updateDuration(): number {
-    if (timer == null) {
-      duration = 0;
-      return;
-    }
-
+    if (!active) return;
+    if (!timer) { duration = 0; return; }
     const start = moment(timer.start);
     const diff = moment().diff(start, "seconds");
     duration = diff;
@@ -55,6 +70,18 @@
       <CurrentTimerDisplay {timer} {duration} />
     </div>
     <hr class="my-4" />
+
+    {#if manualMode}
+      <div class="manual-mode-callout">
+        <div><strong>Manual mode</strong> — No background polling.</div>
+        <button class="refresh-btn"
+          on:click={async () => { try { await onManualRefresh?.(); } catch (e) { console.error(e); } }}
+          aria-label="Refresh Toggl data now" title="Refresh now">
+          Refresh
+        </button>
+      </div>
+      <hr class="my-4" />
+    {/if}
 
     {#if $apiStatusStore === ApiStatus.NO_TOKEN}
       <p class="error-message">
@@ -123,4 +150,15 @@
   .error-message {
     color: var(--text-muted);
   }
+
+  .manual-mode-callout {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; padding: 8px 10px; border: 1px solid var(--background-modifier-border);
+    border-radius: 8px; font-size: 0.95rem; background: var(--background-primary);
+  }
+  .refresh-btn {
+    padding: 6px 10px; border: 1px solid var(--background-modifier-border);
+    border-radius: 8px; background: var(--background-modifier-hover); cursor: pointer;
+  }
+  .refresh-btn:hover { background: var(--background-modifier-active-hover); }
 </style>
